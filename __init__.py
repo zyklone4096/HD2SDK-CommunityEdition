@@ -5306,10 +5306,15 @@ class DotDict(dict):
     def __setattr__(self, name, value):
         dict.__setitem__(self, name, value)
     
+def GetSelected(t):
+    def getter(scene):
+        return scene.get(f"index_{t}_dummy", 5000000)
+    return getter
+
 def SetSelected(t):
-    def wrapper(scene, value):
-        scene[f"index_{t}_dummy"] = 5000000
-    return wrapper
+    def setter(scene, value):
+        pass
+    return setter
 
 
 def register():
@@ -5335,7 +5340,7 @@ def register():
         setattr(bpy.types.Scene, f"list_{t}", CollectionProperty(type = ListItem))
         setattr(bpy.types.Scene, f"index_{t}", IntProperty(name = f"index_{t}", default = 0))
         setattr(bpy.types.Scene, f"filter_{t}", StringProperty(name = f"filter_{t}", default = ""))
-        setattr(bpy.types.Scene, f"index_{t}_dummy", IntProperty(name = f"index_{t}_dummy", default = 5000000, set=SetSelected(t)))
+        setattr(bpy.types.Scene, f"index_{t}_dummy", IntProperty(name = f"index_{t}_dummy", default = 5000000, get=GetSelected(t), set=SetSelected(t)))
     bpy.types.Scene.new_id_entry = StringProperty(name="new_id_entry", default="")
 
 def unregister():
@@ -5348,6 +5353,8 @@ def unregister():
     for t in Global_TypeIDs:
         delattr(bpy.types.Scene, f"list_{t}")
         delattr(bpy.types.Scene, f"index_{t}")
+        delattr(bpy.types.Scene, f"filter_{t}")
+        delattr(bpy.types.Scene, f"index_{t}_dummy")
     bpy.utils.unregister_class(MY_UL_List)
     bpy.utils.unregister_class(ListItem)
 

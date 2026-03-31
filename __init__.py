@@ -1883,7 +1883,8 @@ class ChangeFilepathOperator(Operator, ImportHelper):
 
     filter_glob: StringProperty(options={'HIDDEN'}, default='')
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         global Global_gamepath
         self.filepath = bpy.path.abspath(Global_gamepath)
         
@@ -1914,7 +1915,8 @@ class ChangeSearchpathOperator(Operator, ImportHelper):
 
     filter_glob: StringProperty(options={'HIDDEN'}, default='')
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         global Global_searchpath
         self.filepath = bpy.path.abspath(Global_searchpath)
         
@@ -1953,7 +1955,8 @@ class LoadArchiveOperator(Operator, ImportHelper):
     is_patch: BoolProperty(name="is_patch", default=False, options={'HIDDEN'})
     #files = CollectionProperty(name='File paths', type=bpy.types.PropertyGroup)
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.filepath = bpy.path.abspath(Global_gamepath)
 
     def execute(self, context):

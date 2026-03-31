@@ -986,6 +986,9 @@ class TocManager():
     #______________________#
     # ---- Entry Code ---- #
     def GetEntry(self, FileID, TypeID, SearchAll=False, IgnorePatch=False):
+        # FileID 0 means no reference, skip search
+        if FileID == 0:
+            return None
         # Check Active Patch
         if not IgnorePatch and self.ActivePatch != None:
             Entry = self.ActivePatch.GetEntry(FileID, TypeID)

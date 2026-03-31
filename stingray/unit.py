@@ -1869,27 +1869,31 @@ def PrepareMesh(og_object):
     bpy.ops.object.select_all(action="DESELECT")
     bpy.context.view_layer.objects.active = object
     mesh = object.data
+    
+    has_faces = len(mesh.polygons) > 0
+
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.reveal()
 
-    if bpy.context.scene.Hd2ToolPanelSettings.SplitUVIslands:
+    if has_faces and bpy.context.scene.Hd2ToolPanelSettings.SplitUVIslands:
         # merge by distance
         bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.mesh.remove_doubles(
             use_unselected=False, use_sharp_edge_from_normals=True
         )
 
-    for uv_layer in mesh.uv_layers:
-        mesh.uv_layers.active = uv_layer
-        try:
-            bpy.ops.mesh.select_all(action="SELECT")
-            bpy.ops.uv.select_all(action="SELECT")
-            bpy.ops.uv.seams_from_islands()
-        except:
-            PrettyPrint(
-                "Failed to create seams from UV islands. This is not fatal, but will likely cause undesirable results in-game",
-                "warn",
-            )
+    if has_faces:
+        for uv_layer in mesh.uv_layers:
+            mesh.uv_layers.active = uv_layer
+            try:
+                bpy.ops.mesh.select_all(action="SELECT")
+                bpy.ops.uv.select_all(action="SELECT")
+                bpy.ops.uv.seams_from_islands()
+            except:
+                PrettyPrint(
+                    "Failed to create seams from UV islands. This is not fatal, but will likely cause undesirable results in-game",
+                    "warn",
+                )
 
     bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -1900,31 +1904,43 @@ def PrepareMesh(og_object):
     sharp_edges = [e for e in bm.edges if not e.smooth]
     boundary_seams = [e for e in bm.edges if e.seam]
     # split edges
-    bmesh.ops.split_edges(bm, edges=sharp_edges)
-    bmesh.ops.split_edges(bm, edges=boundary_seams)
+    if sharp_edges:
+        bmesh.ops.split_edges(bm, edges=sharp_edges)
+    if boundary_seams:
+        bmesh.ops.split_edges(bm, edges=boundary_seams)
     # update mesh
     bm.to_mesh(object.data)
     bm.free()
-    # transfer normals
-    modifier = object.modifiers.new("EXPORT_NORMAL_TRANSFER", "DATA_TRANSFER")
-    bpy.context.object.modifiers[modifier.name].data_types_loops = {"CUSTOM_NORMAL"}
-    bpy.context.object.modifiers[modifier.name].object = og_object
-    bpy.context.object.modifiers[modifier.name].use_loop_data = True
-    bpy.context.object.modifiers[modifier.name].loop_mapping = "TOPOLOGY"
-    bpy.ops.object.modifier_apply(modifier=modifier.name)
+    
+    # transfer normals - only if mesh has faces
+    if has_faces:
+        modifier = object.modifiers.new("EXPORT_NORMAL_TRANSFER", "DATA_TRANSFER")
+        bpy.context.object.modifiers[modifier.name].data_types_loops = {"CUSTOM_NORMAL"}
+        bpy.context.object.modifiers[modifier.name].object = og_object
+        bpy.context.object.modifiers[modifier.name].use_loop_data = True
+        bpy.context.object.modifiers[modifier.name].loop_mapping = "TOPOLOGY"
+        try:
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+        except Exception as e:
+            PrettyPrint(f"Failed to apply normal transfer modifier for {og_object.name}: {e}", "warn")
 
-    # triangulate
-    modifier = object.modifiers.new("EXPORT_TRIANGULATE", "TRIANGULATE")
-    bpy.context.object.modifiers[modifier.name].keep_custom_normals = True
-    bpy.ops.object.modifier_apply(modifier=modifier.name)
+        # triangulate
+        modifier = object.modifiers.new("EXPORT_TRIANGULATE", "TRIANGULATE")
+        bpy.context.object.modifiers[modifier.name].keep_custom_normals = True
+        try:
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+        except Exception as e:
+            PrettyPrint(f"Failed to apply triangulate modifier for {og_object.name}: {e}", "warn")
 
     # adjust weights
-    bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
-    try:
-        bpy.ops.object.vertex_group_normalize_all(lock_active=False)
-        bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
-    except:
-        pass
+    if len(mesh.vertices) > 0:
+        bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+        try:
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+            bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
+        except:
+            pass
+        bpy.ops.object.mode_set(mode="OBJECT")
 
     return object
 
@@ -1977,8 +1993,9 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
 
     # get normals, tangents, bitangents
     # mesh.calc_tangents()
-    # 4.3 compatibility change
-    if bpy.app.version[0] >= 4 and bpy.app.version[1] == 0:
+    # Blender 4.0 requires explicit normals calculation
+    # Blender 4.1+ and 5.x handle normals automatically
+    if bpy.app.version[0] == 4 and bpy.app.version[1] == 0:
         if not mesh.has_custom_normals:
             mesh.create_normals_split()
         mesh.calc_normals_split()
@@ -1990,17 +2007,19 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
     # if fuckywuckynormalwormal do this bullshit
     # LoadNormalPalette()
     # normals = NormalsFromPalette(normals)
-    # get uvs
+    # get uvs - use foreach_get for performance (Blender 5.1 compatible)
     for uvlayer in object.data.uv_layers:
-        # if len(uvs) >= 3:
-        #    break
-        texCoord = [[0, 0] for vert in mesh.vertices]
-        for face in object.data.polygons:
-            for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
-                texCoord[vert_idx] = [
-                    uvlayer.data[loop_idx].uv[0],
-                    uvlayer.data[loop_idx].uv[1] * -1 + 1,
-                ]
+        texCoord = [[0.0, 0.0] for _ in mesh.vertices]
+        num_loops = len(uvlayer.data)
+        if num_loops > 0:
+            uv_flat = [0.0] * (num_loops * 2)
+            uvlayer.data.foreach_get("uv", uv_flat)
+            for face in object.data.polygons:
+                for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
+                    texCoord[vert_idx] = [
+                        uv_flat[loop_idx * 2],
+                        uv_flat[loop_idx * 2 + 1] * -1 + 1,
+                    ]
         uvs.append(texCoord)
 
     entry_id = int(og_object["Z_ObjectID"])
@@ -2678,7 +2697,8 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
         new_collection.objects.link(new_object)
         # -- || ASSIGN NORMALS || -- #
         if len(mesh.VertexNormals) == len(mesh.VertexPositions):
-            # 4.3 compatibility change
+            # Blender 4.1+ removed use_auto_smooth, use shade_smooth() instead
+            # Blender 3.x requires use_auto_smooth
             if bpy.app.version[0] >= 4 and bpy.app.version[1] >= 1:
                 new_mesh.shade_smooth()
             else:

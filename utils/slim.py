@@ -3,7 +3,11 @@ import os
 import sys
 import bpy
 
-if bpy.app.version[0] == 4 and bpy.app.version[1] == 0:
+# 根据 Python 版本选择对应的 lz4 模块
+if sys.version_info >= (3, 13):
+    # Blender 5.1+ 使用 Python 3.13+
+    from .lz4_313 import block
+elif bpy.app.version[0] == 4 and bpy.app.version[1] == 0:
     from .lz4_310 import block
 else:
     from .lz4_311 import block

@@ -215,10 +215,12 @@ Global_Materials = (
 
 # 4.3 compatibility change
 def CheckBlenderVersion():
+    # global OnCorrectBlenderVersion
+    # BlenderVersion = bpy.app.version
+    # OnCorrectBlenderVersion = (BlenderVersion[0] == 4 and BlenderVersion[1] <= 3)
+    # PrettyPrint(f"Blender Version: {BlenderVersion} Correct Version: {OnCorrectBlenderVersion}")
     global OnCorrectBlenderVersion
-    BlenderVersion = bpy.app.version
-    OnCorrectBlenderVersion = (BlenderVersion[0] == 4 and BlenderVersion[1] <= 3)
-    PrettyPrint(f"Blender Version: {BlenderVersion} Correct Version: {OnCorrectBlenderVersion}")
+    OnCorrectBlenderVersion = True
 
 def CheckAddonUpToDate():
     PrettyPrint("Checking If Addon is up to date...")
@@ -5319,7 +5321,7 @@ def SetSelected(t):
 
 def register():
     if not os.path.exists(Global_texconvpath): raise Exception("Texconv is not found, please install Texconv in /deps/")
-    # CheckBlenderVersion()
+    CheckBlenderVersion()
     # CheckAddonUpToDate()
     InitializeConfig()
     UpdateArchiveHashes()

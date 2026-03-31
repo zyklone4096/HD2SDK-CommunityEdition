@@ -5314,8 +5314,8 @@ def SetSelected(t):
 
 def register():
     if not os.path.exists(Global_texconvpath): raise Exception("Texconv is not found, please install Texconv in /deps/")
-    CheckBlenderVersion()
-    CheckAddonUpToDate()
+    # CheckBlenderVersion()
+    # CheckAddonUpToDate()
     InitializeConfig()
     UpdateArchiveHashes()
     LoadTypeHashes()

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Helldivers 2 SDK: Community Edition",
     "version": (3, 5, 2),
-    "blender": (4, 0, 0),
+    "blender": (5, 1, 0),
     "category": "Import-Export",
 }
 

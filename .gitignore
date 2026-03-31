@@ -4,3 +4,7 @@ __pycache__
 deps/*
 !deps/texconv.exe
 .python_version
+
+.venv
+.blender_stubs
+.idea

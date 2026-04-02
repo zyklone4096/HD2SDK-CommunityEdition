@@ -2627,6 +2627,80 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
     imported_lights = False
     if len(model) < 1:
         return
+
+    def build_loop_vertex_indices(blender_mesh):
+        loop_vertex_indices = [0] * len(blender_mesh.loops)
+        for face in blender_mesh.polygons:
+            for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
+                loop_vertex_indices[loop_idx] = vert_idx
+        return loop_vertex_indices
+
+    def assign_loop_colors(blender_mesh, vertex_colors, loop_vertex_indices):
+        color_layer = blender_mesh.color_attributes.new(
+            name="Col", type="FLOAT_COLOR", domain="CORNER"
+        )
+
+        flat_colors = []
+        for vert_idx in loop_vertex_indices:
+            color = vertex_colors[vert_idx]
+            flat_colors.extend((color[0], color[1], color[2], color[3]))
+
+        try:
+            color_layer.data.foreach_set("color", flat_colors)
+        except Exception:
+            for loop_idx, vert_idx in enumerate(loop_vertex_indices):
+                color = vertex_colors[vert_idx]
+                color_layer.data[loop_idx].color = (
+                    color[0],
+                    color[1],
+                    color[2],
+                    color[3],
+                )
+
+    def assign_uvs(blender_mesh, vertex_uvs, loop_vertex_indices):
+        for uvs in vertex_uvs:
+            uvlayer = blender_mesh.uv_layers.new()
+            blender_mesh.uv_layers.active = uvlayer
+
+            flat_uvs = []
+            for vert_idx in loop_vertex_indices:
+                uv = uvs[vert_idx]
+                flat_uvs.extend((uv[0], uv[1] * -1 + 1))
+
+            try:
+                uvlayer.uv.foreach_set("vector", flat_uvs)
+            except Exception:
+                for loop_idx, vert_idx in enumerate(loop_vertex_indices):
+                    uv = uvs[vert_idx]
+                    uvlayer.data[loop_idx].uv = (
+                        uv[0],
+                        uv[1] * -1 + 1,
+                    )
+
+    def build_material_indices(mesh_data):
+        material_indices = [0] * len(mesh_data.Indices)
+        gore_index = None
+        for mat_idx, material in enumerate(mesh_data.Materials):
+            if str(material.MatID) == "12070197922454493211":
+                gore_index = mat_idx
+                PrettyPrint(f"Found gore material at index: {mat_idx}")
+            num_tris = int(material.NumIndices / 3)
+            start_index = int(material.StartIndex / 3)
+            end_index = start_index + num_tris
+            material_indices[start_index:end_index] = [mat_idx] * num_tris
+        return material_indices, gore_index
+
+    def remove_gore_faces(blender_object, gore_index):
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(blender_object.data)
+            for face in list(bm.faces):
+                if face.material_index == gore_index:
+                    bm.faces.remove(face)
+            bm.to_mesh(blender_object.data)
+        finally:
+            bm.free()
+
     # Make collection
     old_collection = bpy.context.collection
     if bpy.context.scene.Hd2ToolPanelSettings.MakeCollections:
@@ -2666,6 +2740,7 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
         # new_mesh.from_pydata(mesh.VertexPositions, [], [])
         new_mesh.from_pydata(mesh.VertexPositions, [], mesh.Indices)
         new_mesh.update()
+        loop_vertex_indices = build_loop_vertex_indices(new_mesh)
         # make object from mesh
         new_object = bpy.data.objects.new(name, new_mesh)
         # set transform
@@ -2710,27 +2785,9 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
 
         # -- || ASSIGN VERTEX COLORS || -- #
         if len(mesh.VertexColors) == len(mesh.VertexPositions):
-            color_layer = new_mesh.color_attributes.new(
-                name="Col", type="FLOAT_COLOR", domain="CORNER"
-            )
-            for face in new_mesh.polygons:
-                for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
-                    color_layer.data[loop_idx].color = (
-                        mesh.VertexColors[vert_idx][0],
-                        mesh.VertexColors[vert_idx][1],
-                        mesh.VertexColors[vert_idx][2],
-                        mesh.VertexColors[vert_idx][3],
-                    )
+            assign_loop_colors(new_mesh, mesh.VertexColors, loop_vertex_indices)
         # -- || ASSIGN UVS || -- #
-        for uvs in mesh.VertexUVs:
-            uvlayer = new_mesh.uv_layers.new()
-            new_mesh.uv_layers.active = uvlayer
-            for face in new_mesh.polygons:
-                for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
-                    uvlayer.data[loop_idx].uv = (
-                        uvs[vert_idx][0],
-                        uvs[vert_idx][1] * -1 + 1,
-                    )
+        assign_uvs(new_mesh, mesh.VertexUVs, loop_vertex_indices)
         # -- || ASSIGN WEIGHTS || -- #
         created_groups = []
         available_bones = []
@@ -3092,16 +3149,8 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
             bpy.ops.object.mode_set(mode=current_mode)
 
         # -- || ASSIGN MATERIALS || -- #
-        # convert mesh to bmesh
-        bm = bmesh.new()
-        bm.from_mesh(new_object.data)
-        # assign materials
-        matNum = 0
-        goreIndex = None
+        material_indices, goreIndex = build_material_indices(mesh)
         for material in mesh.Materials:
-            if str(material.MatID) == "12070197922454493211":
-                goreIndex = matNum
-                PrettyPrint(f"Found gore material at index: {matNum}")
             # append material to slot
             try:
                 new_object.data.materials.append(bpy.data.materials[material.MatID])
@@ -3109,24 +3158,9 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
                 raise Exception(
                     f"Tool was unable to find material that this mesh uses, ID: {material.MatID}"
                 )
-            # assign material to faces
-            numTris = int(material.NumIndices / 3)
-            StartIndex = int(material.StartIndex / 3)
-            for f in bm.faces[StartIndex : (numTris + (StartIndex))]:
-                f.material_index = matNum
-            matNum += 1
+        if material_indices:
+            new_object.data.polygons.foreach_set("material_index", material_indices)
         # remove gore mesh
-        if bpy.context.scene.Hd2ToolPanelSettings.RemoveGoreMeshes and goreIndex:
+        if bpy.context.scene.Hd2ToolPanelSettings.RemoveGoreMeshes and goreIndex is not None:
             PrettyPrint(f"Removing Gore Mesh")
-            verticies = []
-            for vert in bm.verts:
-                if len(vert.link_faces) == 0:
-                    continue
-                if vert.link_faces[0].material_index == goreIndex:
-                    verticies.append(vert)
-            for vert in verticies:
-                bm.verts.remove(vert)
-
-        # convert bmesh to mesh
-        bm.to_mesh(new_object.data)
-        bm.free()
+            remove_gore_faces(new_object, goreIndex)

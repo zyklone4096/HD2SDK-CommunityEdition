@@ -4031,6 +4031,19 @@ class PasteCustomPropertyOperator(Operator):
         return {'FINISHED'}
 
 def CustomPropertyContext(self, context):
+    selected_objects = list(getattr(context, "selected_objects", []) or [])
+    active_object = getattr(context, "object", None)
+    has_armature_actions = (
+        active_object is not None and
+        active_object.type == "ARMATURE" and
+        active_object.get("StateMachineID", None) is not None
+    )
+
+    # Blender can keep stale menu callbacks across addon reloads, so avoid drawing
+    # an empty HD2 section when there is nothing actionable in the current context.
+    if active_object is None and len(selected_objects) == 0 and not has_armature_actions:
+        return
+
     layout = self.layout
     layout.separator()
     layout.label(text=Global_SectionHeader)
@@ -4047,7 +4060,7 @@ def CustomPropertyContext(self, context):
     units_in_patch = 0
     unit_count = 0
 
-    for obj in bpy.context.selected_objects:
+    for obj in selected_objects:
         if obj.get("Z_ObjectID", None) is not None:
             unit_count += 1
             if Global_TocManager.ActivePatch != None and Global_TocManager.ActivePatch.GetEntry(obj["Z_ObjectID"], UnitID) != None:
@@ -4062,12 +4075,24 @@ def CustomPropertyContext(self, context):
         layout.separator()
 
     layout.operator("helldiver2.archive_animation_save", icon='ARMATURE_DATA')
-    if bpy.context.object.type == "ARMATURE":
-        if bpy.context.object.get("StateMachineID", None) is not None:
-            layout.operator("helldiver2.search_animations", text="Show Animations for this Armature", icon='VIEWZOOM').state_machine_id = bpy.context.object.get("StateMachineID")
+    if has_armature_actions:
+        layout.operator("helldiver2.search_animations", text="Show Animations for this Armature", icon='VIEWZOOM').state_machine_id = active_object.get("StateMachineID")
 
     if unit_count > 0:
         layout.operator("helldiver2.archive_unit_batchsave", icon= 'FILE_BLEND', text=f"Save {unit_count} Units")
+
+def SafeAppendMenuCallback(menu, callback):
+    try:
+        menu.remove(callback)
+    except:
+        pass
+    menu.append(callback)
+
+def SafeRemoveMenuCallback(menu, callback):
+    try:
+        menu.remove(callback)
+    except:
+        pass
     
 def CustomBoneContext(self, context):
     layout = self.layout
@@ -5367,8 +5392,8 @@ def register():
         bpy.utils.register_class(cls)
     Scene.Hd2ToolPanelSettings = PointerProperty(type=Hd2ToolPanelSettings)
     bpy.utils.register_class(WM_MT_button_context)
-    bpy.types.VIEW3D_MT_object_context_menu.append(CustomPropertyContext)
-    bpy.types.VIEW3D_MT_armature_context_menu.append(CustomBoneContext)
+    SafeAppendMenuCallback(bpy.types.VIEW3D_MT_object_context_menu, CustomPropertyContext)
+    SafeAppendMenuCallback(bpy.types.VIEW3D_MT_armature_context_menu, CustomBoneContext)
     bpy.utils.register_class(MY_UL_List)
     bpy.utils.register_class(ListItem)
     for t in Global_TypeIDs: # make all this into an item in another collection property
@@ -5383,8 +5408,8 @@ def unregister():
     del Scene.Hd2ToolPanelSettings
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    bpy.types.VIEW3D_MT_object_context_menu.remove(CustomPropertyContext)
-    bpy.types.VIEW3D_MT_armature_context_menu.remove(CustomBoneContext)
+    SafeRemoveMenuCallback(bpy.types.VIEW3D_MT_object_context_menu, CustomPropertyContext)
+    SafeRemoveMenuCallback(bpy.types.VIEW3D_MT_armature_context_menu, CustomBoneContext)
     for t in Global_TypeIDs:
         delattr(bpy.types.Scene, f"list_{t}")
         delattr(bpy.types.Scene, f"index_{t}")

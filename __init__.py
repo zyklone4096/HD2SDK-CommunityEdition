@@ -115,6 +115,7 @@ Global_randomID = ""
 
 Global_latestVersionLink = "https://api.github.com/repos/Boxofbiscuits97/HD2SDK-CommunityEdition/releases/latest"
 Global_addonUpToDate = None
+Global_showChangelog = False
 
 Global_archieHashLink = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/archivehashes.json"
 
@@ -3779,6 +3780,16 @@ class LatestReleaseOperator(Operator):
         url = "https://github.com/Boxofbiscuits97/HD2SDK-CommunityEdition/releases/latest"
         webbrowser.open(url, new=0, autoraise=True)
         return{'FINISHED'}
+
+class ViewChangelogOperator(Operator):
+    bl_label  = "View SDK Changelog"
+    bl_idname = "helldiver2.latest_release"
+    bl_description = "Opens The Github Page to the latest changelog"
+
+    def execute(self, context):
+        url = "https://github.com/Boxofbiscuits97/HD2SDK-CommunityEdition/releases/latest"
+        webbrowser.open(url, new=0, autoraise=True)
+        return{'FINISHED'}
         
 class AutoUpdateOperator(Operator):
     bl_label = "Auto Update Helldivers 2 SDK"
@@ -4654,9 +4665,6 @@ class HellDivers2ToolsPanel(Panel):
             row = layout.row()
             row.label(text="Please Use Blender 4.0.X to 4.3.X")
             return
-        
-        if bpy.app.version[1] > 0:
-            row.label(text="Warning! Soft Supported Blender Version. Issues may Occur.", icon='ERROR')
 
 
         row = layout.row()
@@ -4664,16 +4672,25 @@ class HellDivers2ToolsPanel(Panel):
         global Global_addonUpToDate
         global Global_latestAddonVersion
         global Global_gamepathIsValid
+        global Global_showChangelog
 
         if Global_addonUpToDate == None:
             row.label(text="Addon Failed to Check latest Version")
         elif not Global_addonUpToDate:
+            Global_showChangelog = True
             row.label(text="Addon is Outdated!")
-            row.label(text=f"Latest Version: {Global_latestAddonVersion}")
+            row.label(text=f"Latest Version: v{Global_latestAddonVersion}")
             row = layout.row()
             row.alignment = 'CENTER'
             row.scale_y = 2
             row.operator("helldiver2.update", icon = 'URL')
+            row.separator()
+
+        if Global_showChangelog:
+            row = layout.row()
+            row.alignment = 'CENTER'
+            row.scale_y = 1.5
+            row.operator("helldiver2.latest_release", icon = 'TEXT', text=f"View SDK v{Global_latestAddonVersion} Changelog")
             row.separator()
 
         # Draw Settings, Documentation and Spreadsheet
@@ -5321,6 +5338,7 @@ classes = (
     StateMachineSaveOperator,
     SetBoneRagdollOperator,
     AddLightOperator,
+    ViewChangelogOperator,
 )
 
 Global_TocManager = TocManager()

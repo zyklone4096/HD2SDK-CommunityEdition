@@ -117,7 +117,8 @@ Global_latestVersionLink = "https://api.github.com/repos/Boxofbiscuits97/HD2SDK-
 Global_addonUpToDate = None
 Global_showChangelog = False
 
-Global_archieHashLink = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/archivehashes.json"
+Global_archieHashLink   = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/archivehashes.json"
+Global_friendlyNameLink = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/friendlynames.txt"
 
 Global_previousRandomHash = 0
 
@@ -267,6 +268,21 @@ def UpdateArchiveHashes():
             PrettyPrint(f"Updated Archive Hashes File")
         else:
             PrettyPrint(f"Request Failed, Could not update Archive Hashes File", "warn")
+    except requests.ConnectionError:
+        PrettyPrint("Connection failed. Please check your network settings.", "warn")
+    except requests.HTTPError as err:
+        PrettyPrint(f"HTTP error occurred: {err}", "warn")
+
+def UpdateFriendlyNames():
+    try:
+        req = requests.get(Global_friendlyNameLink)
+        req.raise_for_status()  # Check if the request is successful.
+        if req.status_code == requests.codes.ok:
+            file = open(Global_friendlynamespath, "w")
+            file.write(req.text)
+            PrettyPrint(f"Updated Friendly Names File")
+        else:
+            PrettyPrint(f"Request Failed, Could not update Friendly Names File", "warn")
     except requests.ConnectionError:
         PrettyPrint("Connection failed. Please check your network settings.", "warn")
     except requests.HTTPError as err:
@@ -5363,6 +5379,7 @@ def register():
     CheckAddonUpToDate()
     InitializeConfig()
     UpdateArchiveHashes()
+    UpdateFriendlyNames()
     LoadTypeHashes()
     LoadNameHashes()
     LoadArchiveHashes()

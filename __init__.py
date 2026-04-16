@@ -1415,6 +1415,16 @@ def CreateAddonMaterial(ID, StingrayMat, mat, Entry):
     elif Entry.MaterialTemplate == "advanced": SetupAdvancedBlenderMaterial(nodeTree, inputNode, outputNode, bsdf, separateColor, normalMap, TextureNodes, group, mat)
     elif Entry.MaterialTemplate == "translucent": SetupTranslucentBlenderMaterial(nodeTree, inputNode, outputNode, bsdf, separateColor, normalMap, mat)
     
+    warning_label = nodeTree.nodes.new('NodeFrame')
+    warning_label.label = "BLENDER PREVIEW ONLY - ANY CHANGES WILL NOT AFFECT YOUR MOD!"
+    warning_label.location = (inputNode.location.x, inputNode.location.y + 100) 
+    warning_label.width = 1300
+    warning_label.height = 50
+    warning_label.use_custom_color = True
+    warning_label.color = (1, 0, 0)
+    warning_label.label_size = 20
+    warning_label.shrink = True
+
 def SetupBasicBlenderMaterial(nodeTree, inputNode, outputNode, bsdf, separateColor, normalMap):
     bsdf.inputs['Emission Strength'].default_value = 0
     inputNode.location = (-750, 0)

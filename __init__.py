@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Helldivers 2 SDK: Community Edition",
-    "version": (3, 5, 3),
+    "version": (3, 6, 1),
     "blender": (5, 1, 0),
     "category": "Import-Export",
 }
@@ -115,8 +115,10 @@ Global_randomID = ""
 
 Global_latestVersionLink = "https://api.github.com/repos/Boxofbiscuits97/HD2SDK-CommunityEdition/releases/latest"
 Global_addonUpToDate = None
+Global_showChangelog = False
 
-Global_archieHashLink = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/archivehashes.json"
+Global_archieHashLink   = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/archivehashes.json"
+Global_friendlyNameLink = "https://raw.githubusercontent.com/Boxofbiscuits97/HD2SDK-CommunityEdition/main/hashlists/friendlynames.txt"
 
 Global_previousRandomHash = 0
 
@@ -268,6 +270,21 @@ def UpdateArchiveHashes():
             PrettyPrint(f"Updated Archive Hashes File")
         else:
             PrettyPrint(f"Request Failed, Could not update Archive Hashes File", "warn")
+    except requests.ConnectionError:
+        PrettyPrint("Connection failed. Please check your network settings.", "warn")
+    except requests.HTTPError as err:
+        PrettyPrint(f"HTTP error occurred: {err}", "warn")
+
+def UpdateFriendlyNames():
+    try:
+        req = requests.get(Global_friendlyNameLink)
+        req.raise_for_status()  # Check if the request is successful.
+        if req.status_code == requests.codes.ok:
+            file = open(Global_friendlynamespath, "w")
+            file.write(req.text)
+            PrettyPrint(f"Updated Friendly Names File")
+        else:
+            PrettyPrint(f"Request Failed, Could not update Friendly Names File", "warn")
     except requests.ConnectionError:
         PrettyPrint("Connection failed. Please check your network settings.", "warn")
     except requests.HTTPError as err:
@@ -1403,6 +1420,16 @@ def CreateAddonMaterial(ID, StingrayMat, mat, Entry):
     elif Entry.MaterialTemplate == "advanced": SetupAdvancedBlenderMaterial(nodeTree, inputNode, outputNode, bsdf, separateColor, normalMap, TextureNodes, group, mat)
     elif Entry.MaterialTemplate == "translucent": SetupTranslucentBlenderMaterial(nodeTree, inputNode, outputNode, bsdf, separateColor, normalMap, mat)
     
+    warning_label = nodeTree.nodes.new('NodeFrame')
+    warning_label.label = "BLENDER PREVIEW ONLY - ANY CHANGES WILL NOT AFFECT YOUR MOD!"
+    warning_label.location = (inputNode.location.x, inputNode.location.y + 100)
+    warning_label.width = 1300
+    warning_label.height = 50
+    warning_label.use_custom_color = True
+    warning_label.color = (1, 0, 0)
+    warning_label.label_size = 20
+    warning_label.shrink = True
+
 def SetupBasicBlenderMaterial(nodeTree, inputNode, outputNode, bsdf, separateColor, normalMap):
     bsdf.inputs['Emission Strength'].default_value = 0
     inputNode.location = (-750, 0)
@@ -1600,7 +1627,7 @@ def BlendImageToStingrayTexture(image, StingrayTex):
     image.filepath_raw = tga_path
     image.save()
 
-    subprocess.run([Global_texconvpath, "-y", "-o", tempdir, "-ft", "dds", "-dx10", "-f", StingrayTex.Format, "-sepalpha", "-alpha", dds_path], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    subprocess.run([Global_texconvpath, "-y", "-o", tempdir, "-ft", "dds", "-dx10", "-f", StingrayTex.Format, "-sepalpha", "-alpha", "--", dds_path], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     
     if os.path.isfile(dds_path):
         with open(dds_path, 'r+b') as f:
@@ -1625,7 +1652,7 @@ def LoadStingrayTexture(ID, TocData, GpuData, StreamData, Reload, MakeBlendObjec
         with open(dds_path, 'w+b') as f:
             f.write(dds)
         
-        subprocess.run([Global_texconvpath, "-y", "-o", tempdir, "-ft", "png", "-f", "R8G8B8A8_UNORM", "-sepalpha", "-alpha", dds_path], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        subprocess.run([Global_texconvpath, "-y", "-o", tempdir, "-ft", "png", "-f", "R8G8B8A8_UNORM", "-sepalpha", "-alpha", "--", dds_path], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         if os.path.isfile(png_path):
             image = bpy.data.images.load(png_path)
@@ -3082,7 +3109,7 @@ class ExportTexturePNGOperator(Operator, ExportHelper):
                         f.write(Entry.LoadedData.ToDDS())
                     else:
                         f.write(Entry.LoadedData.ToDDSArray()[i])
-                subprocess.run([Global_texconvpath, "-y", "-o", directory, "-ft", "png", "-f", "R8G8B8A8_UNORM", "-sepalpha", "-alpha", dds_path])
+                subprocess.run([Global_texconvpath, "-y", "-o", directory, "-ft", "png", "-f", "R8G8B8A8_UNORM", "-sepalpha", "-alpha", "--", dds_path])
                 if os.path.isfile(dds_path):
                     self.report({'INFO'}, f"Saved PNG Texture to: {dds_path}")
                 else:
@@ -3142,7 +3169,7 @@ class BatchExportTexturePNGOperator(Operator):
                 dds_path = f"{tempdir}/{EntryID}.dds"
                 with open(dds_path, 'w+b') as f:
                     f.write(Entry.LoadedData.ToDDS())
-                subprocess.run([Global_texconvpath, "-y", "-o", self.directory, "-ft", "png", "-f", "R8G8B8A8_UNORM", "-alpha", dds_path])
+                subprocess.run([Global_texconvpath, "-y", "-o", self.directory, "-ft", "png", "-f", "R8G8B8A8_UNORM", "-alpha", "--", dds_path])
                 filepath = f"{self.directory}/{EntryID}.png"
                 if os.path.isfile(filepath):
                     exportedfiles += 1
@@ -3207,7 +3234,7 @@ def SaveImagePNG(filepath, object_id):
             tempdir = tempfile.gettempdir()
             PrettyPrint(filepath)
             PrettyPrint(StingrayTex.Format)
-            subprocess.run([Global_texconvpath, "-y", "-o", tempdir, "-ft", "dds", "-dx10", "-f", StingrayTex.Format, "-sepalpha", "-alpha", filepath], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            subprocess.run([Global_texconvpath, "-y", "-o", tempdir, "-ft", "dds", "-dx10", "-f", StingrayTex.Format, "-sepalpha", "-alpha", "--", filepath], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
             fileName = os.path.basename(filepath).replace(".png", ".dds")
             dds_path = f"{tempdir}/{fileName}"
             PrettyPrint(dds_path)
@@ -3787,7 +3814,17 @@ class LatestReleaseOperator(Operator):
         url = "https://github.com/Boxofbiscuits97/HD2SDK-CommunityEdition/releases/latest"
         webbrowser.open(url, new=0, autoraise=True)
         return{'FINISHED'}
-        
+
+class ViewChangelogOperator(Operator):
+    bl_label  = "View SDK Changelog"
+    bl_idname = "helldiver2.latest_release"
+    bl_description = "Opens The Github Page to the latest changelog"
+
+    def execute(self, context):
+        url = "https://github.com/Boxofbiscuits97/HD2SDK-CommunityEdition/releases/latest"
+        webbrowser.open(url, new=0, autoraise=True)
+        return{'FINISHED'}
+
 class AutoUpdateOperator(Operator):
     bl_label = "Auto Update Helldivers 2 SDK"
     bl_idname = "helldiver2.update"
@@ -4093,7 +4130,7 @@ def SafeRemoveMenuCallback(menu, callback):
         menu.remove(callback)
     except:
         pass
-    
+
 def CustomBoneContext(self, context):
     layout = self.layout
     layout.separator()
@@ -4687,9 +4724,6 @@ class HellDivers2ToolsPanel(Panel):
             row = layout.row()
             row.label(text="Please Use Blender 4.0.X to 4.3.X")
             return
-        
-        if bpy.app.version[1] > 0:
-            row.label(text="Warning! Soft Supported Blender Version. Issues may Occur.", icon='ERROR')
 
 
         row = layout.row()
@@ -4697,16 +4731,25 @@ class HellDivers2ToolsPanel(Panel):
         global Global_addonUpToDate
         global Global_latestAddonVersion
         global Global_gamepathIsValid
+        global Global_showChangelog
 
         if Global_addonUpToDate == None:
             row.label(text="Addon Failed to Check latest Version")
         elif not Global_addonUpToDate:
+            Global_showChangelog = True
             row.label(text="Addon is Outdated!")
-            row.label(text=f"Latest Version: {Global_latestAddonVersion}")
+            row.label(text=f"Latest Version: v{Global_latestAddonVersion}")
             row = layout.row()
             row.alignment = 'CENTER'
             row.scale_y = 2
             row.operator("helldiver2.update", icon = 'URL')
+            row.separator()
+
+        if Global_showChangelog:
+            row = layout.row()
+            row.alignment = 'CENTER'
+            row.scale_y = 1.5
+            row.operator("helldiver2.latest_release", icon = 'TEXT', text=f"View SDK v{Global_latestAddonVersion} Changelog")
             row.separator()
 
         # Draw Settings, Documentation and Spreadsheet
@@ -5354,6 +5397,7 @@ classes = (
     StateMachineSaveOperator,
     SetBoneRagdollOperator,
     AddLightOperator,
+    ViewChangelogOperator,
 )
 
 Global_TocManager = TocManager()
@@ -5383,6 +5427,7 @@ def register():
     # CheckAddonUpToDate()
     InitializeConfig()
     UpdateArchiveHashes()
+    UpdateFriendlyNames()
     LoadTypeHashes()
     LoadNameHashes()
     LoadArchiveHashes()

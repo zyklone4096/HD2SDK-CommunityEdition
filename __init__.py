@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Helldivers 2 SDK: Community Edition",
-    "version": (3, 8, 0),
+    "version": (3, 9, 2),
     "blender": (5, 1, 0),
     "category": "Import-Export",
 }
@@ -964,7 +964,7 @@ class TocManager():
                 executor.shutdown()
         return toc
     
-    def GetEntryByLoadArchive(self, FileID: int, TypeID: int):
+    def GetEntryByLoadArchive(self, FileID: int, TypeID: int) -> TocEntry:
         return self.GetEntry(FileID, TypeID, SearchAll=True, IgnorePatch=True)
     
     def ArchiveNotEmpty(self, toc):
@@ -1002,7 +1002,7 @@ class TocManager():
 
     #______________________#
     # ---- Entry Code ---- #
-    def GetEntry(self, FileID, TypeID, SearchAll=False, IgnorePatch=False):
+    def GetEntry(self, FileID, TypeID, SearchAll=False, IgnorePatch=False) -> TocEntry:
         # FileID 0 means no reference, skip search
         if FileID == 0:
             return None
@@ -1033,7 +1033,7 @@ class TocManager():
         Entry = self.GetEntry(FileID, TypeID, SearchAll)
         if Entry != None: Entry.Load(Reload)
 
-    def Save(self, FileID, TypeID):
+    def Save(self, FileID, TypeID) -> bool:
         Entry = self.GetEntry(FileID, TypeID)
         if Entry == None:
             PrettyPrint(f"Failed to save entry {FileID}")
@@ -1111,7 +1111,7 @@ class TocManager():
             raise Exception("No patch exists, please create one first")
         self.ActivePatch.AddEntry(Entry)
         
-    def AddEntryToPatchID(self, Entry, dest_id):
+    def AddEntryToPatchID(self, Entry, dest_id) -> TocEntry:
         if self.ActivePatch == None:
             raise Exception("No patch exists, please create one first")
             
@@ -1122,7 +1122,7 @@ class TocManager():
             return PatchEntry
         return None
 
-    def AddEntryToPatch(self, FileID, TypeID):
+    def AddEntryToPatch(self, FileID, TypeID) -> TocEntry:
         if self.ActivePatch == None:
             raise Exception("No patch exists, please create one first")
 
@@ -1140,16 +1140,16 @@ class TocManager():
             self.ActivePatch.RemoveEntry(FileID, TypeID)
         return None
 
-    def GetPatchEntry(self, Entry):
+    def GetPatchEntry(self, Entry) -> TocEntry:
         if self.ActivePatch != None:
             return self.ActivePatch.GetEntry(Entry.FileID, Entry.TypeID)
         return None
-    def GetPatchEntry_B(self, FileID, TypeID):
+    def GetPatchEntry_B(self, FileID, TypeID) -> TocEntry:
         if self.ActivePatch != None:
             return self.ActivePatch.GetEntry(FileID, TypeID)
         return None
 
-    def IsInPatch(self, Entry):
+    def IsInPatch(self, Entry) -> bool:
         if self.ActivePatch != None:
             PatchEntry = self.ActivePatch.GetEntry(Entry.FileID, Entry.TypeID)
             if PatchEntry != None: return True
@@ -2376,7 +2376,36 @@ class StateMachineBlendMaskWeightOperator(Operator):
             self.report({'ERROR'}, f"Could not find entry for ID: {self.object_id}")
             return {'CANCELLED'}
         return {'FINISHED'}
-    
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+class StateMachineAnimationIDOperator(Operator):
+    bl_label = "Animation ID"
+    bl_idname = "helldiver2.animation_id"
+    bl_description = "Animation ID"
+
+    object_id: bpy.props.StringProperty()
+    animation_id: bpy.props.StringProperty()
+    animation_index: bpy.props.IntProperty()
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "animation_id")
+
+    def execute(self, context):
+        Entry = Global_TocManager.GetEntry(self.object_id, StateMachineID)
+        if Entry:
+            if self.animation_index < len(Entry.LoadedData.animation_ids):
+                Entry.LoadedData.animation_ids[self.animation_index] = int(self.animation_id)
+            else:
+                self.report({'ERROR'}, f"Animation index {self.animation_index} out of range")
+                return {'CANCELLED'}
+        else:
+            self.report({'ERROR'}, f"Could not find entry for ID: {self.object_id}")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
         
@@ -4734,7 +4763,25 @@ class HellDivers2ToolsPanel(Panel):
                         op.bone_weight = weight
                         op.blend_mask_index = i
                 i -= 1
-                    
+
+            row = layout.row()
+            if f"animation_ids" not in Global_Foldouts:
+                Global_Foldouts[f"animation_ids"] = False
+            animation_ids_show = Global_Foldouts[f"animation_ids"]
+            fold_icon = "DOWNARROW_HLT" if animation_ids_show else "RIGHTARROW"
+            row.operator("helldiver2.collapse_section", text=f"Animations", icon=fold_icon, emboss=False).type = f"animation_ids"
+
+            if animation_ids_show:
+                for k, animation_id in enumerate(state_machine.animation_ids):
+                    row = layout.row()
+                    split = row.split()
+                    text = GetFriendlyNameFromID(animation_id)
+                    split.label(text=text)
+                    op = split.operator("helldiver2.animation_id", text=f"{animation_id}")
+                    op.object_id = str(state_machine_entry.FileID)
+                    op.animation_index = k
+                    op.animation_id = str(animation_id)
+
             # draw the values for the bone blend masks for each layer
     
     def draw(self, context):
@@ -5423,6 +5470,7 @@ classes = (
     AddLightOperator,
     ViewChangelogOperator,
     LoadPlayerAvatarOperator,
+    StateMachineAnimationIDOperator,
 )
 
 Global_TocManager = TocManager()

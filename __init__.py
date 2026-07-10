@@ -4792,7 +4792,7 @@ class HellDivers2ToolsPanel(Panel):
         if not OnCorrectBlenderVersion:
             row.label(text="Using Incorrect Blender Version!")
             row = layout.row()
-            row.label(text="Please Use Blender 4.0.X to 4.3.X")
+            row.label(text="Please Use Blender 5.1.X")
             return
 
 

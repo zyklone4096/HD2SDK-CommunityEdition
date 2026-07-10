@@ -1,5 +1,6 @@
 __pycache__
 .vscode
+.opencode
 
 deps/*
 !deps/texconv.exe

@@ -228,6 +228,37 @@ def CheckBlenderVersion():
     global OnCorrectBlenderVersion
     OnCorrectBlenderVersion = True
 
+def GetActionFCurves(action):
+    """Return the action's F-curves across legacy and layered Blender APIs."""
+    slots = getattr(action, "slots", None)
+    if slots:
+        layers = getattr(action, "layers", None)
+        if not layers:
+            return ()
+
+        for layer in layers:
+            strips = getattr(layer, "strips", None)
+            if not strips:
+                continue
+            for strip in strips:
+                channelbag_getter = getattr(strip, "channelbag", None)
+                if not callable(channelbag_getter):
+                    continue
+                for slot in slots:
+                    try:
+                        channelbag = channelbag_getter(slot)
+                    except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+                        continue
+                    if channelbag is None:
+                        continue
+                    fcurves = getattr(channelbag, "fcurves", None)
+                    if fcurves is not None and len(fcurves) > 0:
+                        return fcurves
+        return ()
+
+    fcurves = getattr(action, "fcurves", None)
+    return fcurves if fcurves is not None else ()
+
 def CheckAddonUpToDate():
     PrettyPrint("Checking If Addon is up to date...")
     currentVersion = bl_info["version"]
@@ -3531,7 +3562,7 @@ class SaveStingrayAnimationOperator(Operator):
             self.report({'ERROR'}, "Please select an armature")
             return {'CANCELLED'}
         action_name = object.animation_data.action.name
-        if len(object.animation_data.action.fcurves) == 0:
+        if len(GetActionFCurves(object.animation_data.action)) == 0:
             self.report({'ERROR'}, f"Action: {action_name} has no keyframe data! Make sure your animation has at least an initial keyframe with a recorded pose.")
             return {'CANCELLED'}
         entry_id = action_name.split(" ")[0].split("_")[0].split(".")[0]

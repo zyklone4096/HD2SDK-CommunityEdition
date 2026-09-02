@@ -1,6 +1,5 @@
 from math import ceil, sqrt
 import math
-
 import mathutils
 import bpy
 import random
@@ -1544,6 +1543,7 @@ class Light:
     DISABLED = 0x2
     INDIRECT_LIGHTING = 0x4
     VOLUMETRIC_FOG = 0x10
+    DIRECT_LIGHTING = 0x40
 
     def __init__(self):
         self.name_hash = self.bone_index = self.falloff_start = self.falloff_end = (
@@ -1991,6 +1991,12 @@ def PrepareMesh(og_object):
 
     return object
 
+def compute_bone_name_hash(bone_name):
+    try:
+        return int(bone_name)
+    except ValueError:
+        return murmur32_hash(bone_name.encode("utf-8"))
+
 
 def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
     global Global_palettepath
@@ -2091,8 +2097,6 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
     bone_entry = Global_TocManager.GetEntry(
         stingray_mesh_entry.BonesRef, BoneID, IgnorePatch=False, SearchAll=True
     )
-    modified_bone_entry = False
-    modified_state_machine = False
     bone_names = []
     bone_data = None
     state_machine_data = None
@@ -2144,7 +2148,6 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
         armature_obj.hide_set(False)
         bpy.context.view_layer.objects.active = armature_obj
         bpy.ops.object.mode_set(mode="EDIT")
-
         # check if animated bones list has changed, and if it has, clear all modded animations for this armature
         # but keep them in the patch
         if bone_data:
@@ -2165,17 +2168,66 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
                     "Changes made to animated bones, clearing saved animation data"
                 )
                 if state_machine_data:
-                    for animation in state_machine_data.animation_ids:
-                        animation_data = Global_TocManager.GetEntry(
-                            animation, AnimationID, IgnorePatch=False, SearchAll=True
-                        )
+                    for i, animation in enumerate(state_machine_data.animation_ids):
+                        animation_data = Global_TocManager.GetEntry(animation, AnimationID, IgnorePatch=False, SearchAll=True)
                         if Global_TocManager.IsInPatch(animation_data):
-                            Global_TocManager.RemoveEntryFromPatch(
-                                animation, AnimationID
-                            )
-                        Global_TocManager.AddEntryToPatch(animation, AnimationID)
+                            Global_TocManager.RemoveEntryFromPatch(animation, AnimationID, ReloadUI=False)
+                        Global_TocManager.AddEntryToPatch(animation, AnimationID, ReloadUI=(i==len(state_machine_data.animation_ids)-1))
+
+        # --- MAKE CHANGES TO ANIMATED BONE DATA ---
+
+        if bone_data:
+            added_bones = [bone for bone in armature_obj.data.edit_bones if bone.get('Animated', False) and compute_bone_name_hash(bone.name) not in bone_data.BoneHashes]
+            removed_bones = [bone for bone in armature_obj.data.edit_bones if not bone.get('Animated', False) and compute_bone_name_hash(bone.name) in bone_data.BoneHashes]
+            removed_bone_indices = [bone_data.BoneHashes.index(compute_bone_name_hash(bone.name)) for bone in removed_bones]
+            removed_bone_indices.sort(reverse=True)
+
+            # Remove deleted animated bones
+            if removed_bones:
+                for bone_index in removed_bone_indices:
+                    bone_data.BoneHashes.pop(bone_index)
+                    bone_data.Names.pop(bone_index)
+                bone_data.NumNames -= len(removed_bones)
+                if state_machine_data:
+                    for blend_mask in state_machine_data.blend_masks:
+                        blend_mask.bone_count -= len(removed_bones)
+                        for bone_index in removed_bone_indices:
+                            try:
+                                blend_mask.bone_weights.pop(bone_index)
+                            except IndexError:  # happens when removing a custom animated bone
+                                pass
+
+            # Add new animated bones
+            if added_bones:
+                bone_data.BoneHashes.extend([compute_bone_name_hash(bone.name) for bone in added_bones])
+                bone_data.Names.extend([bone.name for bone in added_bones])
+                bone_data.NumNames += len(added_bones)
+                if state_machine_data:
+                    for blend_mask in state_machine_data.blend_masks:
+                        blend_mask.bone_count += len(added_bones)
+                        blend_mask.bone_weights.extend([0.0 for bone in added_bones])
+
+            # remove and add bones from animations
+            if added_bones or removed_bones:
+                if state_machine_data:
+                    for animation in state_machine_data.animation_ids:
+                        animation_data = Global_TocManager.GetEntry(animation, AnimationID, IgnorePatch=False, SearchAll=True)
+                        if not animation_data.IsLoaded:
+                            animation_data.Load(False, False)
+                        animation_data.LoadedData.remove_bone_list(removed_bone_indices)
+                        for bone in added_bones:
+                            animation_data.LoadedData.add_bone(bone)
+                        animation_data.LoadedData.finish_bone_update()
+                        Global_TocManager.Save(animation, AnimationID)
+
+            if added_bones or removed_bones:
+                if bone_entry: bone_entry.Save()
+                if state_machine_entry: state_machine_entry.Save()
+
+        # --- END ANIMATED BONE DATA ---
 
         for bone in armature_obj.data.edit_bones:
+            # add bone to transform info if needed
             try:
                 name_hash = int(bone.name)
             except ValueError:
@@ -2193,97 +2245,6 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
                 transform_info.TransformEntries.append(l)
                 transform_info.NumTransforms += 1
                 transform_index = len(transform_info.NameHashes) - 1
-
-            # set animated
-            try:
-                animated = bone["Animated"]
-                if animated and name_hash not in bone_data.BoneHashes:
-                    bone_data.BoneHashes.append(name_hash)
-                    bone_data.Names.append(bone.name)
-                    bone_data.NumNames += 1
-                    modified_bone_entry = True
-                    modified_state_machine = True
-                    for blend_mask in state_machine_data.blend_masks:
-                        blend_mask.bone_count += 1
-                        blend_mask.bone_weights.append(0.0)
-                    if state_machine_data:
-                        for animation in state_machine_data.animation_ids:
-                            animation_data = Global_TocManager.GetEntry(
-                                animation,
-                                AnimationID,
-                                IgnorePatch=False,
-                                SearchAll=True,
-                            )
-                            if not animation_data.IsLoaded:
-                                animation_data.Load(False, False)
-                            animation_data.LoadedData.add_bone(bone)
-                            Global_TocManager.Save(animation, AnimationID)
-                if not animated and name_hash in bone_data.BoneHashes:
-                    list_index = bone_data.BoneHashes.index(name_hash)
-                    bone_data.BoneHashes.pop(list_index)
-                    bone_data.Names.pop(list_index)
-                    bone_data.NumNames -= 1
-                    modified_bone_entry = True
-                    modified_state_machine = True
-                    for blend_mask in state_machine_data.blend_masks:
-                        try:
-                            blend_mask.bone_weights.pop(list_index)
-                            blend_mask.bone_count -= 1
-                        except (
-                            IndexError
-                        ):  # happens when removing a custom animated bone
-                            pass
-                    if state_machine_data:
-                        for animation in state_machine_data.animation_ids:
-                            animation_data = Global_TocManager.GetEntry(
-                                animation,
-                                AnimationID,
-                                IgnorePatch=False,
-                                SearchAll=True,
-                            )
-                            if not animation_data.IsLoaded:
-                                animation_data.Load(False, False)
-                            try:
-                                animation_data.LoadedData.remove_bone(list_index)
-                            except (
-                                IndexError
-                            ):  # happens when removing a custom animated bone
-                                pass
-                            Global_TocManager.Save(animation, AnimationID)
-                    else:
-                        raise Exception(
-                            "No state machine property on armature, unable to automatically remove bone data from animations; please set a valid StateMachineID property."
-                        )
-            except (KeyError, AttributeError) as e:
-                print(e)
-
-            # set ragdoll
-            """
-            try:
-                bone_index = bone_data.BoneHashes.index(name_hash)
-                modified_state_machine = True
-                print(f"Setting jiggle bone for {bone.name}")
-                state_machine_data.remove_ragdoll(bone_index)
-                ragdoll = bone['Jiggle']
-                print(ragdoll)
-                weight = bone["Weight"]
-                gravity = bone["Gravity"]
-                param3 = bone["Param 3"]
-                param4 = bone["Param 4"]
-                param5 = bone["Param 5"]
-                param6 = bone["Param 6"]
-                param7 = bone["Param 7"]
-                param8 = bone["Param 8"]
-                param9 = bone["Param 9"]
-                params = [weight, gravity, param3, param4, param5, param6, param7, param8, param9]
-                if ragdoll:
-                    state_machine_data.set_ragdoll(bone_index, params)
-            except (KeyError, AttributeError) as e:
-                pass
-            except ValueError as e:
-                pass
-            """
-
             # set bone matrix
             loc, rot, scale = bone.matrix.decompose()
             if transform_info.TransformMatrices[transform_index]:
@@ -2356,12 +2317,6 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
         bpy.context.view_layer.objects.active = prev_obj
         bpy.ops.object.mode_set(mode=prev_mode)
 
-    if modified_bone_entry and bone_entry:
-        bone_entry.Save()
-
-    if modified_state_machine and state_machine_entry:
-        state_machine_entry.Save()
-
     # get lights
     if armature_obj is not None:
         bpy.ops.object.mode_set(mode="EDIT")
@@ -2422,7 +2377,7 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
                 target_light.end_angle = math.pi
             color = blend_light_data.color
             intensity = blend_light_data.energy
-            target_light.flags = target_light.flags & 0b11101110
+            target_light.flags = target_light.flags & 0b10101110
             if blend_light_data.use_shadow:
                 target_light.flags |= Light.CAST_SHADOW
             try:
@@ -2430,12 +2385,16 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
                     target_light.flags |= Light.VOLUMETRIC_FOG
             except Exception as e:
                 print(e)
-
             target_light.color = [
                 color.r * intensity,
                 color.g * intensity,
                 color.b * intensity,
             ]
+            try:
+                if blend_light_data["Direct Lighting"]:
+                    target_light.flags |= Light.DIRECT_LIGHTING
+            except Exception as e:
+                print(e)
             if new_light:
                 light_list.lights.append(target_light)
         bpy.ops.object.mode_set(mode=prev_mode)
@@ -2571,11 +2530,17 @@ def GetMeshData(og_object, Global_TocManager, Global_BoneNames):
     # bpy.ops.object.mode_set(mode='OBJECT')
     # get faces
     temp_faces = [[] for n in range(len(object.material_slots))]
+    faces_skipped = 0
     for f in mesh.polygons:
-        temp_faces[f.material_index].append(
-            [f.vertices[0], f.vertices[1], f.vertices[2]]
-        )
-        materials[f.material_index].NumIndices += 3
+        try:
+            temp_faces[f.material_index].append(
+                [f.vertices[0], f.vertices[1], f.vertices[2]]
+            )
+            materials[f.material_index].NumIndices += 3
+        except IndexError:
+            faces_skipped += 1
+    if faces_skipped:
+        PrettyPrint(f"Skipping {faces_skipped} faces that were not assigned a material...", "warn")
     for tmp in temp_faces:
         faces.extend(tmp)
 
@@ -2957,11 +2922,6 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
                     if bones_entry and boneName in bones_entry.Names:
                         animated = True
                         bone_index = bones_entry.Names.index(boneName)
-                        for r in state_machine_entry.ragdolls:
-                            if r.bone_index == bone_index:
-                                ragdoll = True
-                                ragdoll_params = r.params
-                                break
                     try:
                         b = int(boneName)
                         if bones_entry and b in bones_entry.BoneHashes:
@@ -2974,20 +2934,6 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
                         newBone.tail = 0, 0.05, 0
                         if bones_entry:
                             newBone["Animated"] = animated
-                        """
-                        if bones_entry:
-                            newBone['Jiggle'] = ragdoll
-                            if ragdoll:
-                                newBone['Weight'] = ragdoll_params[0]
-                                newBone['Gravity'] = ragdoll_params[1]
-                                newBone['Param 3'] = ragdoll_params[2]
-                                newBone['Param 4'] = ragdoll_params[3]
-                                newBone['Param 5'] = ragdoll_params[4]
-                                newBone['Param 6'] = ragdoll_params[5]
-                                newBone['Param 7'] = ragdoll_params[6]
-                                newBone['Param 8'] = ragdoll_params[7]
-                                newBone['Param 9'] = ragdoll_params[8]
-                        """
                         doPoseBone[newBone.name] = True
                     else:
                         doPoseBone[newBone.name] = False
@@ -3166,6 +3112,10 @@ def CreateModel(stingray_unit, id, Global_BoneNames, bones_entry, state_machine_
                     blend_light["Volumetric"] = True
                 else:
                     blend_light["Volumetric"] = False
+                if light.flags & Light.DIRECT_LIGHTING:
+                    blend_light["Direct Lighting"] = True
+                else:
+                    blend_light["Direct Lighting"] = False
                 blend_light.use_custom_distance = True
                 light_object = bpy.data.objects.new(
                     name=str(light.name_hash), object_data=blend_light

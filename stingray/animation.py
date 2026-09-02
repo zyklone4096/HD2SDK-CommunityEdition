@@ -425,24 +425,45 @@ class StingrayAnimation:
         for entry in self.entries:
             if entry.bone > bone_index:
                 entry.bone -= 1
-        output_stream = MemoryStream(IOMode="write")
-        self.Serialize(output_stream)
-        self.file_size = len(output_stream.Data)
-        
+                
+    def remove_bone_list(self, bone_index_list):
+        if len(bone_index_list) == 0: return
+        bone_index_list.sort(reverse=True)
+        adjustment_list = [0 for _ in range(len(self.initial_bone_states))]
+        for i in range(len(adjustment_list)):
+            for bone_index in reversed(bone_index_list):
+                if bone_index < i:
+                    adjustment_list[i] += 1
+                else:
+                    break
+        for bone_index in bone_index_list:
+            self.initial_bone_states.pop(bone_index)
+        self.bone_count -= len(bone_index_list)
+        self.entries = [entry for entry in self.entries if entry.bone not in bone_index_list]
+        for entry in self.entries:
+            if entry.type == 0 and entry.subtype == 2: continue
+            entry.bone -= adjustment_list[entry.bone]
+
     def add_bone(self, bone):
         initial_state = AnimationBoneInitialState()
         initial_state.compress_position = 0
         initial_state.compress_rotation = 0
         initial_state.compress_scale = 0
-        if bone.parent:
-            translation, rotation, scale = (bone.parent.matrix.inverted() @ bone.matrix).decompose()
+        if self.is_additive_animation:
+            mat = mathutils.Matrix.Identity(4)
         else:
-            translation, rotation, scale = bone.matrix.decompose()
+            if bone.parent is not None:
+                mat = (bone.parent.matrix.inverted() @ bone.matrix)
+            else:
+                mat = bone.matrix
+        translation, rotation, scale = mat.decompose()
         initial_state.position = translation.to_tuple()
-        initial_state.rotation = [0, 0, 0, 1]
+        initial_state.rotation = (rotation[1], rotation[2], rotation[3], rotation[0])
         initial_state.scale = [1, 1, 1] if not self.is_additive_animation else [0, 0, 0]
         self.initial_bone_states.append(initial_state)
         self.bone_count += 1
+        
+    def finish_bone_update(self):
         output_stream = MemoryStream(IOMode="write")
         self.Serialize(output_stream)
         self.file_size = len(output_stream.Data)
@@ -615,6 +636,7 @@ class StingrayAnimation:
         for entry in self.entries:
             if entry.type not in [2, 3] and entry.subtype not in [4, 5]: # skip scale entries
                 continue
+            if entry.type == 0 and entry.subtype == 2: continue
             bone_name = index_to_bone[entry.bone]
             if bone_name not in armature.pose.bones:
                 PrettyPrint(f"Failed to find bone: {bone_name} in rig for animation. This may be intended", 'warn')

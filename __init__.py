@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Helldivers 2 SDK: Community Edition",
-    "version": (3, 9, 2),
+    "version": (3, 9, 9),
     "blender": (5, 1, 0),
     "category": "Import-Export",
 }
@@ -43,6 +43,7 @@ from .stingray import bones as bones_m
 from .stingray import composite_unit as composite_unit_m
 from .stingray import unit as unit_m
 from .stingray import state_machine as state_machine_m
+from .stingray import xaml as xaml_m
 from .utils import slim as slim_m
 from .utils import hashing as hash_m
 from .utils import memoryStream as memoryStream_m
@@ -63,6 +64,7 @@ importlib.reload(unit_m)
 importlib.reload(hash_m)
 importlib.reload(slim_m)
 importlib.reload(state_machine_m)
+importlib.reload(xaml_m)
 
 from .stingray.animation import StingrayAnimation, AnimationException
 from .stingray.raw_dump import StingrayRawDump
@@ -73,6 +75,8 @@ from .stingray.state_machine import StingrayStateMachine
 from .stingray.bones import LoadBoneHashes, StingrayBones
 from .stingray.composite_unit import StingrayCompositeMesh
 from .stingray.unit import CreateModel, GetObjectsMeshData, StingrayMeshFile
+from .stingray.xaml import StingrayXAML
+
 from .utils.slim import is_slim_version, load_package, get_package_toc, slim_init
 
 from .utils.hashing import murmur64_hash
@@ -606,6 +610,7 @@ class TocEntry:
         if self.TypeID == BoneID: callback = LoadStingrayBones
         if self.TypeID == AnimationID: callback = LoadStingrayAnimation
         if self.TypeID == StateMachineID: callback = LoadStingrayStateMachine
+        if self.TypeID == XamlID: callback = LoadStingrayXaml
         if callback == None: callback = LoadStingrayDump
 
         if callback != None:
@@ -627,6 +632,7 @@ class TocEntry:
         if self.TypeID == AnimationID: callback = SaveStingrayAnimation
         if self.TypeID == BoneID: callback = SaveStingrayBones
         if self.TypeID == StateMachineID: callback = SaveStingrayStateMachine
+        if self.TypeID == XamlID: callback = SaveStingrayXaml
         if callback == None: callback = SaveStingrayDump
 
         if self.IsLoaded:
@@ -844,7 +850,7 @@ class StreamToc:
             return self.TocDict[TypeID][FileID]
         except KeyError:
             return None
-    def AddEntry(self, NewEntry, override=False):
+    def AddEntry(self, NewEntry, override=False, ReloadUI=True):
         if not override and self.GetEntry(NewEntry.FileID, NewEntry.TypeID) != None:
             raise Exception("Entry with same ID already exists")
         try:
@@ -852,12 +858,12 @@ class StreamToc:
         except KeyError:
             self.TocDict[NewEntry.TypeID] = {}
             self.TocDict[NewEntry.TypeID][NewEntry.FileID] = NewEntry
-        LoadEntryLists()
+        if ReloadUI: LoadEntryLists()
         self.UpdateTypes()
-    def RemoveEntry(self, FileID, TypeID):
+    def RemoveEntry(self, FileID, TypeID, ReloadUI=True):
         try:
             del self.TocDict[TypeID][FileID]
-            LoadEntryLists()
+            if ReloadUI: LoadEntryLists()
             self.UpdateTypes()
         except KeyError:
             pass
@@ -1106,23 +1112,23 @@ class TocManager():
             if Patch.Name == Name:
                 self.SetActivePatch(Patch)
 
-    def AddNewEntryToPatch(self, Entry):
+    def AddNewEntryToPatch(self, Entry, ReloadUI=True):
         if self.ActivePatch == None:
             raise Exception("No patch exists, please create one first")
-        self.ActivePatch.AddEntry(Entry)
+        self.ActivePatch.AddEntry(Entry, ReloadUI=ReloadUI)
         
-    def AddEntryToPatchID(self, Entry, dest_id) -> TocEntry:
+    def AddEntryToPatchID(self, Entry, dest_id, ReloadUI=True) -> TocEntry:
         if self.ActivePatch == None:
             raise Exception("No patch exists, please create one first")
             
         if Entry != None:
             PatchEntry = deepcopy(Entry)
             PatchEntry.FileID = dest_id
-            self.ActivePatch.AddEntry(PatchEntry, override=True)
+            self.ActivePatch.AddEntry(PatchEntry, override=True, ReloadUI=ReloadUI)
             return PatchEntry
         return None
 
-    def AddEntryToPatch(self, FileID, TypeID) -> TocEntry:
+    def AddEntryToPatch(self, FileID, TypeID, ReloadUI=True) -> TocEntry:
         if self.ActivePatch == None:
             raise Exception("No patch exists, please create one first")
 
@@ -1131,13 +1137,13 @@ class TocManager():
             PatchEntry = deepcopy(Entry)
             if PatchEntry.IsSelected:
                 self.SelectEntries([PatchEntry], True)
-            self.ActivePatch.AddEntry(PatchEntry)
+            self.ActivePatch.AddEntry(PatchEntry, ReloadUI=ReloadUI)
             return PatchEntry
         return None
 
-    def RemoveEntryFromPatch(self, FileID, TypeID):
+    def RemoveEntryFromPatch(self, FileID, TypeID, ReloadUI=True):
         if self.ActivePatch != None:
-            self.ActivePatch.RemoveEntry(FileID, TypeID)
+            self.ActivePatch.RemoveEntry(FileID, TypeID, ReloadUI=ReloadUI)
         return None
 
     def GetPatchEntry(self, Entry) -> TocEntry:
@@ -1717,7 +1723,8 @@ def LoadStingrayUnit(ID, TocData, GpuData, StreamData, Reload, MakeBlendObject, 
     toc  = MemoryStream(TocData)
     gpu  = MemoryStream(GpuData)
         
-    
+    bone_data = None
+    state_machine_data = None
     StingrayMesh = StingrayMeshFile()
     StingrayMesh.NameHash = int(ID)
     StingrayMesh.LoadMaterialSlotNames = LoadMaterialSlotNames
@@ -1728,8 +1735,9 @@ def LoadStingrayUnit(ID, TocData, GpuData, StreamData, Reload, MakeBlendObject, 
     state_machine_entry = Global_TocManager.GetEntry(StingrayMesh.StateMachineRef, StateMachineID, SearchAll=True, IgnorePatch=False)
     if state_machine_entry and not state_machine_entry.IsLoaded:
         state_machine_entry.Load(False, False)
-    if MakeBlendObject and bones_entry and state_machine_entry: CreateModel(StingrayMesh, str(ID), Global_BoneNames, bones_entry.LoadedData, state_machine_entry.LoadedData)
-    elif MakeBlendObject: CreateModel(StingrayMesh, str(ID), Global_BoneNames, None, None)
+    if bones_entry: bone_data = bones_entry.LoadedData
+    if state_machine_entry: state_machine_data = state_machine_entry.LoadedData
+    if MakeBlendObject: CreateModel(StingrayMesh, str(ID), Global_BoneNames, bone_data, state_machine_data)
     return StingrayMesh
 
 def SaveStingrayUnit(self, ID, TocData, GpuData, StreamData, StingrayMesh, BlenderOpts=None):
@@ -1753,6 +1761,17 @@ def SaveStingrayUnit(self, ID, TocData, GpuData, StreamData, StingrayMesh, Blend
     gpu  = MemoryStream(IOMode = "write")
     StingrayMesh.Serialize(toc, gpu, Global_TocManager, BlenderOpts=BlenderOpts)
     return [toc.Data, gpu.Data, b""]
+
+def LoadStingrayXaml(ID, TocData, GpuData, StreamData, Reload, MakeBlendObject):
+    f = MemoryStream(TocData)
+    Xaml = StingrayXAML()
+    Xaml.Serialize(f)
+    return Xaml
+
+def SaveStingrayXaml(self, ID, TocData, GpuData, StreamData, LoadedData):
+    f = MemoryStream(IOMode="write")
+    LoadedData.Serialize(f)
+    return [f.Data, b"", b""]
 
 #endregion
 
@@ -3607,6 +3626,83 @@ class ImportStingrayParticleOperator(Operator):
         return{'FINISHED'}
 #endregion
 
+#region Operators: XAML
+
+class ImportXAMLOperator(Operator, ImportHelper):
+    bl_label = "Import XAML"
+    bl_idname = "helldiver2.xaml_import"
+    bl_description = "Overwrite current entry with a XAML file"
+
+    filename_ext = ".xaml"
+    filter_glob: StringProperty(default="*.xaml", options={'HIDDEN'})
+
+    object_id: StringProperty(options={"HIDDEN"})
+
+    def execute(self, context):
+        if PatchesNotLoaded(self):
+            return {'CANCELLED'}
+
+        EntryIDs = IDsFromString(self.object_id)
+        for EntryID in EntryIDs:
+            Entry = Global_TocManager.GetEntryByLoadArchive(int(EntryID), XamlID)
+            if Entry.IsLoaded == False:
+                Entry.Load()
+
+            with open(self.filepath, 'r+b') as f:
+                Entry.LoadedData.xamlData = f.read()
+
+            Entry.Save()
+
+            Entry.IsModified = True
+            if not Global_TocManager.IsInPatch(Entry):
+                Global_TocManager.AddEntryToPatch(Entry.FileID, Entry.TypeID)
+
+            self.report({'INFO'}, f"Imported Xaml File: {self.filepath}")
+
+        # Redraw
+        for area in context.screen.areas:
+            if area.type == "VIEW_3D": area.tag_redraw()
+        return{'FINISHED'}
+
+class ExportXAMLOperator(Operator):
+    bl_label = "Export XAML"
+    bl_idname = "helldiver2.xaml_export"
+    bl_description = "Export as a XAML file"
+
+    directory: StringProperty(name="Outdir Path",description="xaml output dir")
+    filter_folder: BoolProperty(default=True,options={"HIDDEN"})
+
+    object_id: StringProperty(options={"HIDDEN"})
+
+    def execute(self, context):
+        if PatchesNotLoaded(self):
+            return {'CANCELLED'}
+
+        EntryIDs = IDsFromString(self.object_id)
+        for EntryID in EntryIDs:
+            Entry = Global_TocManager.GetEntryByLoadArchive(int(EntryID), XamlID)
+            if Entry.IsLoaded == False:
+                Entry.Load()
+
+            FileName = f"{Entry.FileID}.xaml"
+            path = self.directory + FileName
+            with open(path, 'w+b') as f:
+                f.write(Entry.LoadedData.xamlData)
+
+            self.report({'INFO'}, f"Exported Xaml File: {path}")
+
+        # Redraw
+        for area in context.screen.areas:
+            if area.type == "VIEW_3D": area.tag_redraw()
+
+        return{'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+#endregion
+
 #region Operators: Clipboard Functionality
 
 class CopyArchiveEntryOperator(Operator):
@@ -4273,7 +4369,8 @@ class AddLightOperator(Operator):
         blend_light.energy = 1000.0
         blend_light.show_cone = True
         blend_light['Volumetric'] = False
-        
+        blend_light['Direct Lighting'] = True
+
         light_object = bpy.data.objects.new(name = light_name, object_data = blend_light)
         light_object.lock_rotation = (True, True, True)
         light_object.lock_location = (True, True, True)
@@ -5312,6 +5409,13 @@ class WM_MT_button_context(Menu):
         props.ignore_patch = True
         # Draw dump import button
         # if AreAllMaterials and SingleEntry: layout.operator("helldiver2.archive_object_dump_import", icon="IMPORT", text="Import Raw Dump").object_id = FileIDStr
+        # Draw XAML buttons
+        if item_type == XamlID:
+            layout.separator()
+            props = layout.operator("helldiver2.xaml_import", icon='WORKSPACE', text=f"Import {len(selected_items)} XAML file{'s' if len(selected_items) > 1 else ''}")
+            props.object_id     = FileIDStr
+            props = layout.operator("helldiver2.xaml_export", icon='WORKSPACE', text=f"Export {len(selected_items)} XAML file{'s' if len(selected_items) > 1 else ''}")
+            props.object_id     = FileIDStr
         # Draw save buttons
         layout.separator()
         if item_type == UnitID:
@@ -5471,6 +5575,8 @@ classes = (
     ViewChangelogOperator,
     LoadPlayerAvatarOperator,
     StateMachineAnimationIDOperator,
+    ImportXAMLOperator,
+    ExportXAMLOperator,
 )
 
 Global_TocManager = TocManager()
